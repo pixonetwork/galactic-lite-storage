@@ -9,114 +9,151 @@
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
         #canvas { display: block; width: 100vw !important; height: 100vh !important; position: fixed; top: 0; left: 0; border: none; outline: none; object-fit: fill; }
-        #status { position: absolute; top: 30px; left: 0; width: 100%; z-index: 10; text-align: center; font-family: 'Orbitron', sans-serif; font-size: 22px; letter-spacing: 3px; background: linear-gradient(to right, #500, #550, #050, #055, #005, #505, #500); background-size: 200% auto; color: transparent; -webkit-background-clip: text; background-clip: text; animation: rainbow 3s linear infinite; pointer-events: none; text-shadow: 0 0 10px rgba(255,255,255,0.1); }
-        #status i { margin-right: 15px; }
+        
+        #loader-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            text-align: center;
+            width: 80%;
+            max-width: 500px;
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        #status {
+            font-size: 18px;
+            letter-spacing: 2px;
+            margin-bottom: 15px;
+            background: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+            background-size: 200% auto;
+            color: transparent;
+            -webkit-background-clip: text;
+            background-clip: text;
+            animation: rainbow 3s linear infinite;
+        }
+
+        /* The Visual Progress Bar */
+        #progress-bar-wrap {
+            width: 100%;
+            height: 10px;
+            background: #222;
+            border-radius: 5px;
+            overflow: hidden;
+            border: 1px solid #444;
+        }
+
+        #progress-bar-fill {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #500, #f00);
+            box-shadow: 0 0 10px #f00;
+            transition: width 0.2s ease;
+        }
+
         @keyframes rainbow { to { background-position: 200% center; } }
     </style>
-    <!-- Cross-Origin Isolation required for Godot 4 shared array buffers -->
+    <!-- [COI-ServiceWorker](https://github.com/gzuidhof/coi-serviceworker) is required for SharedArrayBuffer -->
     <script src="https://fastly.jsdelivr.net/gh/gzuidhof/coi-serviceworker@latest/coi-serviceworker.min.js"></script>
 </head>
 <body>
     <canvas id="canvas"></canvas>
-    <div id="status"><i class="fas fa-compact-disc fa-spin"></i> LOADING...</div>
+    
+    <div id="loader-container">
+        <div id="status"><i class="fas fa-compact-disc fa-spin"></i> INITIALIZING...</div>
+        <div id="progress-bar-wrap">
+            <div id="progress-bar-fill"></div>
+        </div>
+    </div>
 
-    <!-- Load the main Godot engine loader script -->
     <script src="index.js"></script>
-
     <script>
-        (function() {
-            'use strict';
+    (function() {
+        'use strict';
+        const BASE_URL = "https://fastly.jsdelivr.net/gh/pixonetwork/brotato@main/";
+        const TOTAL_BYTES = 163 * 1024 * 1024; // 163 MB
+        const CHUNKS = {
+            "index.pck": { count: 8, pattern: (i) => `index.pck.part${i}` },
+            "index.wasm": { count: 2, pattern: (i) => `index.wasm.${i}` }
+        };
 
-            // CONFIGURATION: Set asset details here
-            const BASE_URL = "https://fastly.jsdelivr.net/gh/pixonetwork/brotato@main/"; // Path to your chunk files
-            const TOTAL_BYTES = 163 * 1024 * 1024; // 163 MB estimated total size
+        const statusEl = document.getElementById('status');
+        const progressFill = document.getElementById('progress-bar-fill');
+        const progressTracker = {};
 
-            const CHUNKS = {
-                "index.pck": { count: 8, pattern: (i) => `index.pck.part${i}` },
-                "index.wasm": { count: 2, pattern: (i) => `index.wasm.${i}` }
-            };
+        function updateUI() {
+            const loadedBytes = Object.values(progressTracker).reduce((a, b) => a + b, 0);
+            const percent = Math.min((loadedBytes / TOTAL_BYTES) * 100, 100);
+            const currentMB = (loadedBytes / 1048576).toFixed(1);
+            const totalMB = (TOTAL_BYTES / 1048576).toFixed(1);
+            
+            statusEl.innerHTML = `<i class="fas fa-compact-disc fa-spin"></i> LOADING: ${currentMB}MB / ${totalMB}MB`;
+            progressFill.style.width = percent + "%";
+        }
 
-            const statusEl = document.getElementById('status');
-            const progressTracker = {};
-
-            function updateUI() {
-                const loadedBytes = Object.values(progressTracker).reduce((a, b) => a + b, 0);
-                const currentMB = (loadedBytes / 1048576).toFixed(2);
-                const totalMB = (TOTAL_BYTES / 1048576).toFixed(2);
-                statusEl.innerHTML = `<i class="fas fa-compact-disc fa-spin"></i> LOADING: ${currentMB} / ${totalMB} MB`;
-            }
-
-            // Downloads chunks in parallel, updates progress, and merges them into one Blob
-            async function fetchAndMerge(targetName, config) {
-                const downloadPromises = [];
-
-                for (let i = 1; i <= config.count; i++) {
-                    const chunkName = config.pattern(i);
-                    const url = BASE_URL + chunkName;
-                    
-                    progressTracker[chunkName] = 0;
-
-                    const promise = fetch(url).then(async (response) => {
-                        if (!response.ok) throw new Error(`Failed to fetch ${chunkName}`);
-                        
-                        // Track download progress of individual chunk
-                        const reader = response.body.getReader();
-                        const chunks = [];
-                        
-                        while(true) {
-                            const {done, value} = await reader.read();
-                            if (done) break;
-                            chunks.push(value);
-                            progressTracker[chunkName] += value.length;
-                            updateUI();
-                        }
-                        
-                        return new Blob(chunks);
-                    });
-                    downloadPromises.push(promise);
-                }
-
-                const blobs = await Promise.all(downloadPromises);
-                return new Blob(blobs, { type: targetName.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream' });
-            }
-
-            // Intercept Godot's fetch initialization requests
-            window.fetch = async function(resource, init) {
-                const urlString = typeof resource === 'string' ? resource : resource.url;
+        async function fetchAndMerge(targetName, config) {
+            const downloadPromises = [];
+            for (let i = 1; i <= config.count; i++) {
+                const chunkName = config.pattern(i);
+                const url = BASE_URL + chunkName;
+                progressTracker[chunkName] = 0;
                 
-                for (const [targetName, config] of Object.entries(CHUNKS)) {
-                    if (urlString.endsWith(targetName)) {
-                        try {
-                            const mergedBlob = await fetchAndMerge(targetName, config);
-                            return new Response(mergedBlob, { status: 200, statusText: "OK" });
-                        } catch (error) {
-                            statusEl.innerText = "DOWNLOAD ERROR";
-                            console.error(error);
-                        }
+                const promise = fetch(url).then(async (response) => {
+                    if (!response.ok) throw new Error(`Failed to fetch ${chunkName}`);
+                    const reader = response.body.getReader();
+                    const chunks = [];
+                    while(true) {
+                        const {done, value} = await reader.read();
+                        if (done) break;
+                        chunks.push(value);
+                        progressTracker[chunkName] += value.length;
+                        updateUI();
+                    }
+                    return new Blob(chunks);
+                });
+                downloadPromises.push(promise);
+            }
+            const blobs = await Promise.all(downloadPromises);
+            return new Blob(blobs, { type: targetName.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream' });
+        }
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(resource, init) {
+            const urlString = typeof resource === 'string' ? resource : resource.url;
+            for (const [targetName, config] of Object.entries(CHUNKS)) {
+                if (urlString.endsWith(targetName)) {
+                    try {
+                        const mergedBlob = await fetchAndMerge(targetName, config);
+                        return new Response(mergedBlob, { status: 200, statusText: "OK" });
+                    } catch (error) {
+                        statusEl.innerText = "DOWNLOAD ERROR";
+                        console.error(error);
                     }
                 }
-                return originalFetch(resource, init);
-            };
-            const originalFetch = window.fetch;
+            }
+            return originalFetch(resource, init);
+        };
 
-            // Start Godot engine instance loading
-            const godot = new Godot({
-                onProgress: function(current, total) {
-                    // Fallback progress for other elements like audio worklets if not tracked
-                    if (total > 0 && Object.keys(progressTracker).length === 0) {
-                        statusEl.innerHTML = `<i class="fas fa-compact-disc fa-spin"></i> LOADING: ${(current / 1048576).toFixed(2)} MB`;
-                    }
+        const godot = new Godot({
+            onProgress: function(current, total) {
+                // Fallback for non-chunked files (e.g. audio)
+                if (total > 0 && Object.keys(progressTracker).length === 0) {
+                    const percent = (current / total) * 100;
+                    progressFill.style.width = percent + "%";
+                    statusEl.innerHTML = `<i class="fas fa-compact-disc fa-spin"></i> STARTING ENGINE...`;
                 }
-            });
+            }
+        });
 
-            godot.startGame({
-                executable: "index", // Base filename for index.wasm / index.pck
-                canvas: document.getElementById("canvas"),
-                afterStart: function() {
-                    statusEl.style.display = "none"; // Hide loader when complete
-                }
-            });
-        })();
+        godot.startGame({
+            executable: "index",
+            canvas: document.getElementById("canvas"),
+            afterStart: function() {
+                document.getElementById('loader-container').style.display = "none";
+            }
+        });
+    })();
     </script>
 </body>
 </html>
