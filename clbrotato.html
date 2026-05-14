@@ -67,11 +67,11 @@
         </div>
     </div>
 
-    <script src="index.js"></script>
+    <script src="https://unpkg.com/brotato@latest/index.js"></script>
     <script>
     (function() {
         'use strict';
-        const BASE_URL = "https://fastly.jsdelivr.net/gh/pixonetwork/brotato@main/";
+        const BASE_URL = "https://unpkg.com/brotato@latest/";
         const TOTAL_BYTES = 163 * 1024 * 1024; // 163 MB
         const CHUNKS = {
             "index.pck": { count: 8, pattern: (i) => `index.pck.part${i}` },
