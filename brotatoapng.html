@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>PN // Godot Loader</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+
+
+<style>
+   :root {
+       --neon: #00f2ff;
+       --neon-glow: rgba(0, 242, 255, 0.7);
+       --bg: #000000;
+       --border: rgba(0, 242, 255, 0.3);
+       --success: #39ff14;
+       --error: #ff3333;
+   }
+
+
+   * { font-family: 'Orbitron', sans-serif !important; box-sizing: border-box; letter-spacing: 1px; }
+   body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: var(--bg); color: #fff; }
+  
+   #canvas { display: block; width: 100vw !important; height: 100vh !important; position: fixed; top: 0; left: 0; border: none; outline: none; object-fit: fill; z-index: 1; visibility: hidden; }
+
+
+   /* --- TERMINAL LOADER --- */
+   #loader-overlay {
+       position: fixed; inset: 0; background: #000; z-index: 1000;
+       display: flex; flex-direction: column; align-items: center; justify-content: center;
+   }
+
+
+   .terminal-box {
+       width: 90%; max-width: 550px; background: #050505; border: 1px solid var(--border);
+       padding: 50px 40px; text-align: center; border-radius: 4px;
+       display: flex; flex-direction: column; align-items: center;
+       animation: slam-in 0.4s cubic-bezier(0.17, 0.89, 0.32, 1.28);
+   }
+   @keyframes slam-in { 0% { transform: scale(3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+
+   .logo-text { font-size: 2.2rem; font-weight: 900; color: var(--neon); text-shadow: 0 0 20px var(--neon-glow); margin-bottom: 10px; }
+   .term-status { font-size: 11px; color: var(--neon); margin-bottom: 25px; font-weight: 700; text-transform: uppercase; letter-spacing: 3px; }
+  
+   .bar-container { width: 100%; height: 8px; background: #111; border: 1px solid var(--border); position: relative; overflow: hidden; }
+   .bar-fill { height: 100%; background: var(--neon); width: 0%; transition: width 0.1s linear; box-shadow: 0 0 15px var(--neon); }
+
+
+   .term-logs {
+       margin-top: 30px; height: 100px; overflow: hidden;
+       font-family: monospace !important; font-size: 10px; color: #444;
+       text-align: left; width: 100%; border-top: 1px solid #111; padding-top: 15px;
+   }
+   .log-line { margin-bottom: 4px; display: flex; justify-content: space-between; }
+   .log-line.verified { color: var(--success); }
+
+
+   /* --- CINEMATIC OVERLAYS --- */
+   .cinematic-overlay {
+       position: fixed; inset: 0; background: #000; z-index: 2000;
+       display: none; align-items: center; justify-content: center;
+       flex-direction: column; opacity: 0; transition: opacity 0.8s ease;
+   }
+   .cinematic-content { transform: scale(0.8); transition: all 2s ease-out; filter: blur(10px); text-align: center; }
+   .cinematic-content.zoom { transform: scale(1); filter: blur(0); }
+  
+   .godot-logo { width: 200px; height: 200px; margin-bottom: 20px; }
+   .huge-title { font-size: 2.5rem; font-weight: 900; color: #fff; letter-spacing: 12px; text-transform: uppercase; }
+
+
+   /* --- STARTING RING --- */
+   #starting-overlay {
+       position: fixed; inset: 0; background: #000; z-index: 3000;
+       display: none; flex-direction: column; align-items: center; justify-content: center;
+   }
+   .neural-ring {
+       width: 60px; height: 60px; border: 4px solid rgba(0, 242, 255, 0.1);
+       border-top: 4px solid var(--neon); border-radius: 50%;
+       animation: spin 0.8s infinite linear;
+   }
+   @keyframes spin { to { transform: rotate(360deg); } }
+
+
+</style>
+<!-- Service Worker -->
+<script src="https://cdn.jsdelivr.net/gh/gzuidhof/coi-serviceworker@latest/coi-serviceworker.min.js"></script>
+</head>
+<body>
+
+
+<canvas id="canvas"></canvas>
+
+
+<!-- 1. TERMINAL LOADER -->
+<div id="loader-overlay">
+   <div class="terminal-box">
+       <div class="logo-text">Galactic</div>
+       <div id="term-status" class="term-status">Initializing Link...</div>
+       <div class="bar-container"><div id="bar" class="bar-fill"></div></div>
+       <div class="term-logs" id="term-logs"></div>
+   </div>
+</div>
+
+
+<!-- 2. GODOT SPLASH -->
+<div id="godot-splash" class="cinematic-overlay">
+   <div class="cinematic-content" id="godot-content">
+       <img class="godot-logo" src="https://godotengine.org/assets/logo_dark.svg" alt="Godot">
+       <div class="huge-title">Godot Engine</div>
+   </div>
+</div>
+
+
+<!-- 3. PIXONETWORK SPLASH -->
+<div id="pixo-splash" class="cinematic-overlay">
+   <div class="cinematic-content" id="pixo-content">
+       <div style="font-size:10px; color:var(--neon); margin-bottom:15px; letter-spacing:8px;">BROUGHT TO YOU BY</div>
+       <div class="huge-title">PIXONETWORK</div>
+   </div>
+</div>
+
+
+<!-- 4. STARTING RING -->
+<div id="starting-overlay">
+   <div class="neural-ring"></div>
+   <div style="margin-top:30px; font-size:12px; color:var(--neon); font-weight:900; letter-spacing:5px;">STARTING_SYSTEM</div>
+</div>
+
+
+<script>
+(function() {
+'use strict';
+
+
+const HASH = "2938bf5";
+const BASE = `https://cdn.jsdelivr.net/gh/pixonetwork/brotato@${HASH}/`;
+const nativeFetch = window.fetch;
+
+
+const barEl = document.getElementById('bar');
+const statusEl = document.getElementById('term-status');
+const logsEl = document.getElementById('term-logs');
+const loaderOverlay = document.getElementById('loader-overlay');
+const startingOverlay = document.getElementById('starting-overlay');
+
+
+const mergedData = {};
+const pendingRequests = {};
+
+
+function addLog(filename) {
+   const div = document.createElement('div');
+   div.className = 'log-line';
+   div.id = `log-${filename.replace(/\./g, '-')}`;
+   div.innerHTML = `<span>> ${filename}</span><span class="byte-count">0 KB</span>`;
+   logsEl.appendChild(div);
+   if(logsEl.childNodes.length > 5) logsEl.removeChild(logsEl.firstChild);
+   return div.querySelector('.byte-count');
+}
+
+
+// Fetch Interceptor
+window.fetch = function(url, ...args) {
+   const u = url.toString();
+   if (u.includes("Brotato.pck") || u.includes("Brotato.wasm")) {
+       const f = u.includes(".pck") ? "Brotato.pck" : "Brotato.wasm";
+       if (mergedData[f]) return Promise.resolve(new Response(mergedData[f]));
+       return new Promise((resolve) => {
+           if (!pendingRequests[f]) pendingRequests[f] = [];
+           pendingRequests[f].push(resolve);
+       });
+   }
+   return nativeFetch(url, ...args);
+};
+
+
+async function syncAsset(name, startPart, endPart) {
+   const bufs = [];
+   statusEl.innerText = `LINKING: ${name.toUpperCase()}`;
+   barEl.style.width = "0%";
+  
+   // endPart === -1 means it's a single file (like the wasm)
+   const isSingle = endPart === -1;
+   const partsCount = isSingle ? 1 : (endPart - startPart + 1);
+
+
+   for (let i = 0; i < partsCount; i++) {
+       const currentPartIndex = isSingle ? "" : `.part${startPart + i}`;
+       const filename = `${name}${currentPartIndex}`;
+       const byteSpan = addLog(filename);
+      
+       const response = await nativeFetch(BASE + encodeURIComponent(filename));
+       const reader = response.body.getReader();
+       const contentLength = +response.headers.get('Content-Length') || 1;
+      
+       let received = 0;
+       let chunks = [];
+      
+       while(true) {
+           const {done, value} = await reader.read();
+           if (done) break;
+           chunks.push(value);
+           received += value.length;
+           byteSpan.innerText = (received / 1024).toFixed(0) + " KB";
+           barEl.style.width = `${Math.floor((received / contentLength) * 100)}%`;
+       }
+      
+       const partBuffer = new Uint8Array(received);
+       let pos = 0;
+       for (let chunk of chunks) {
+           partBuffer.set(chunk, pos);
+           pos += chunk.length;
+       }
+       bufs.push(partBuffer);
+       document.getElementById(`log-${filename.replace(/\./g, '-')}`).classList.add('verified');
+   }
+  
+   statusEl.innerText = `MERGING: ${name.toUpperCase()}`;
+   barEl.style.width = "100%";
+   const b = new Blob(bufs, { type: 'application/octet-stream' });
+   mergedData[name] = b;
+  
+   if (pendingRequests[name]) {
+       pendingRequests[name].forEach(res => res(new Response(b)));
+       delete pendingRequests[name];
+   }
+   await new Promise(r => setTimeout(r, 600));
+}
+
+
+async function playCinematic(id, contentId) {
+   const el = document.getElementById(id);
+   const content = document.getElementById(contentId);
+   el.style.display = "flex";
+   await new Promise(r => setTimeout(r, 50));
+   el.style.opacity = "1";
+   content.classList.add("zoom");
+   await new Promise(r => setTimeout(r, 2200));
+   el.style.opacity = "0";
+   await new Promise(r => setTimeout(r, 800));
+   el.style.display = "none";
+}
+
+
+async function init() {
+   try {
+       // 1. PCK (Parts 0 through 8)
+       await syncAsset("Brotato.pck", 0, 8);
+      
+       // 2. WASM (Single file)
+       await syncAsset("Brotato.wasm", -1, -1);
+
+
+       loaderOverlay.style.display = "none";
+
+
+       // 3. Godot Splash
+       await playCinematic("godot-splash", "godot-content");
+
+
+       // 4. Pixonetwork Outro
+       await playCinematic("pixo-splash", "pixo-content");
+
+
+       // 5. Neural Ring
+       startingOverlay.style.display = "flex";
+
+
+       // 6. Engine Execution
+       const s = document.createElement('script');
+       s.src = BASE + "Brotato.js";
+       s.onload = () => {
+           const engine = new Engine({
+               "args":[],
+               "canvasResizePolicy":2,
+               "executable":"Brotato",
+               "experimentalVK":false,
+               "fileSizes":{"Brotato.pck":147972096,"Brotato.wasm":19796835},
+               "focusCanvas":true,
+               "gdnativeLibs":[]
+           });
+
+
+           engine.startGame().then(() => {
+               startingOverlay.style.display = "none";
+               document.getElementById('canvas').style.visibility = "visible";
+               window.dispatchEvent(new Event('resize'));
+           });
+       };
+       document.body.appendChild(s);
+      
+   } catch (e) {
+       statusEl.innerText = "UPLINK_FAILURE";
+       statusEl.style.color = "var(--error)";
+       console.error(e);
+   }
+}
+
+
+init();
+})();
+</script>
+</body>
+</html>
